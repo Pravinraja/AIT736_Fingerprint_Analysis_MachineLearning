@@ -1,0 +1,118 @@
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.svm import SVC
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import classification_report, confusion_matrix, roc_curve, auc
+from sklearn.model_selection import train_test_split
+from tensorflow.keras.preprocessing.image import load_img, img_to_array
+
+
+class FingerprintGenderClassifier:
+    # Initialize data directory and image dimensions
+    def __init__(self, data_directory, image_dimensions=(128, 128)):
+        self.data_directory = data_directory
+        self.image_dimensions = image_dimensions
+
+    def load_data(self, max_images_per_gender=1000):
+        images, labels = [], []
+        gender_count = {'M': 0, 'F': 0}
+
+        for root_dir, _, files in os.walk(self.data_directory):
+            for file_name in files:
+                if file_name.lower().endswith('.bmp'):
+                    gender_label = self._extract_gender(file_name)
+                    if gender_label and gender_count[gender_label] < max_images_per_gender:
+                        try:
+                            # Load, resize, normalize, and flatten images
+                            img_path = os.path.join(root_dir, file_name)
+                            img = load_img(img_path, target_size=self.image_dimensions, color_mode='grayscale')
+                            img_array = img_to_array(img).flatten() / 255.0
+                            images.append(img_array)
+                            labels.append(0 if gender_label == 'F' else 1)
+                            gender_count[gender_label] += 1
+                        except Exception as e:
+                            print(f"Error to load {file_name}: {e}")
+                            continue
+
+        print(f"Loaded {len(images)} images.")
+        print(f"Gender distribution: Female={gender_count['F']}, Male={gender_count['M']}")
+        return np.array(images), np.array(labels)
+
+    @staticmethod
+    def _extract_gender(file_name):
+        # Select gender from file
+        if 'F_' in file_name.upper():
+            return 'F'
+        elif 'M_' in file_name.upper():
+            return 'M'
+        return None
+
+    def train_and_evaluate(self, X, y, test_size=0.2):
+        # Split data to training and testing sets
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, stratify=y, random_state=42)
+
+        # Create SVM with RBF kernel
+        pipeline = Pipeline([
+            ('scaler', StandardScaler()),
+            ('svm', SVC(kernel='rbf', probability=True, random_state=42))
+        ])
+
+        # Train SVM
+        pipeline.fit(X_train, y_train)
+
+        # Make predictions and print results
+        y_pred = pipeline.predict(X_test)
+        print("\nClassification Report:")
+        print(classification_report(y_test, y_pred, target_names=['Female', 'Male']))
+
+        # Plot confusion matrix
+        cm = confusion_matrix(y_test, y_pred)
+        self._plot_confusion_matrix(cm, save_path="confusion_matrix.png")
+
+        return pipeline, X_test, y_test
+
+    @staticmethod
+    def _plot_confusion_matrix(conf_matrix, save_path="confusion_matrix.png"):
+        sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', xticklabels=['Female', 'Male'],
+                    yticklabels=['Female', 'Male'])
+        plt.title('Confusion Matrix')
+        plt.xlabel('Predicted')
+        plt.ylabel('True')
+        plt.savefig(save_path)
+        plt.show()
+
+    @staticmethod
+    def _plot_roc_curve(model, X_test, y_test, save_path="roc_curve.png"):
+        y_scores = model.decision_function(X_test)
+        fpr, tpr, _ = roc_curve(y_test, y_scores)
+        roc_auc = auc(fpr, tpr)
+
+        plt.plot(fpr, tpr, label=f'ROC Curve (AUC = {roc_auc:.2f})')
+        plt.plot([0, 1], [0, 1], 'k--')
+        plt.xlabel('False Positive Rate')
+        plt.ylabel('True Positive Rate')
+        plt.title('ROC Curve')
+        plt.legend(loc='lower right')
+        plt.savefig(save_path)
+        plt.show()
+
+
+if __name__ == "__main__":
+    # Set dataset directory
+    dataset_path = '/Users/lynnhartsell/PycharmProjects/LetterRecognition/AITProject/Fingerprints/SOCOFing'
+
+    # Initialize classifier
+    classifier = FingerprintGenderClassifier(data_directory=dataset_path)
+
+    # Load data
+    X, y = classifier.load_data()
+
+    # Train and evaluate to confirm data is loaded
+    if X.size and y.size:
+        trained_model, X_test, y_test = classifier.train_and_evaluate(X, y)
+        classifier._plot_roc_curve(trained_model.named_steps['svm'], X_test, y_test)
+    else:
+        print("No data, reevaluate")
